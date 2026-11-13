@@ -1,0 +1,1071 @@
+{
+  "name": "Webhook Dedupe · 2 Receiver (Data Tables)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Webhook Dedupe · Receiver on Data Tables\n`POST dedupe/data-table` with a JSON body that has an `id`. Same behaviour as the Postgres receiver, with no database of your own.\n\nA Data Table has no unique constraint, so \"look, then insert\" lets several runs through. This one turns it around: **insert first, then look**. Every run adds its own row, then reads the row with the lowest `id` for the key. The run whose row that is has the claim. The others delete their row again.\n\nThe first row stays as the record of the event. A failed or stale claim is taken over with one conditional update on that row, decided by the `owner` in the row that comes back.\n\nSettings are at the top of the **Event** node. Put your own call in **Do the work**.",
+        "width": 640,
+        "height": 380,
+        "color": 4
+      },
+      "id": "d587606f-827e-4011-85ae-4953ec158643",
+      "name": "About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -440
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### The conflict path\n- **Duplicate: done** answers `200`. The event was handled, the sender can stop.\n- **Duplicate: in progress** answers `409`. Another run holds the claim and has not finished. A `2xx` here would tell the sender to stop while that run can still crash. With `409` it retries later and then finds the event done, failed or stale.\n- **Failed** answers `500` and frees the claim, so the next delivery runs again.\n- **Superseded**: this run was so slow that a retry took the claim over. It may not mark the event done.\n\nIf your sender gives up after a few non-2xx answers, change `409` to `200` and accept that a crash in that moment needs a manual replay.",
+        "width": 640,
+        "height": 300,
+        "color": 5
+      },
+      "id": "3633316e-9de2-4850-8f75-50cfb077c978",
+      "name": "Conflict",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        -440
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/data-table",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f9400583-1a80-4299-804b-0fe08b9686a5",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "c112aa91-afed-487f-8dc0-7492cf1b0912",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Settings.\nconst SOURCE = 'demo'; // scope of the key: one value per sender, so ids of two senders cannot collide\nconst LEASE_SECONDS = 900; // a claim still \"processing\" after this long may be taken over. Set it longer than your slowest run.\n\nconst body = $input.first().json.body ?? {};\n// Where the sender puts its event id. Change this line for your sender.\nconst id = body.id === undefined || body.id === null ? '' : String(body.id).trim();\nconst hex = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0');\nreturn [\n  {\n    json: {\n      event_key: id ? `${SOURCE}:${id}` : '',\n      // The run token. Every later write checks it, so a run that lost its\n      // claim cannot mark the event done.\n      owner: `${$execution.id}-${hex()}${hex()}`,\n      lease_seconds: LEASE_SECONDS,\n      event: body,\n    },\n  },\n];"
+      },
+      "id": "7c7f8620-2d97-43a4-8342-76a85cd3f48f",
+      "name": "Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "685479c3-bdb5-435e-8c27-366b906077b2",
+              "leftValue": "={{ !!$json.event_key }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "75cd5dd0-9329-48b5-8b64-cc0cb5d82418",
+      "name": "Has an id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, error: 'missing event id' } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "e25c9885-fa9e-46ba-84ec-c89e58974bd0",
+      "name": "No id: refuse",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "webhook_claims"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_key": "={{ $json.event_key }}",
+            "owner": "={{ $json.owner }}",
+            "status": "processing",
+            "claimed_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "event_key",
+              "displayName": "event_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "claimed_at",
+              "displayName": "claimed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b3f23cff-a1d2-41b9-8a3a-268a63a891d1",
+      "name": "Add my row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "webhook_claims"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "event_key",
+              "condition": "eq",
+              "keyValue": "={{ $('Event').first().json.event_key }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1,
+        "orderBy": true,
+        "orderByColumn": "id",
+        "orderByDirection": "ASC"
+      },
+      "id": "746651a7-9e6f-426a-8e17-81f2cb3293f8",
+      "name": "First row for this key",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9de45fbb-1c71-4af0-8891-f0e059e3c178",
+              "leftValue": "={{ $json.id === $('Add my row').first().json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "7dcd0c43-d4a6-48f3-823d-9bb5b4b1c2a9",
+      "name": "Am I first?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3d242994-832e-4dc5-890d-bc049784de58",
+              "name": "claim_id",
+              "value": "={{ $json.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b8c31c71-2838-4f76-8b03-b21d12899edd",
+      "name": "Claimed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://example.com/replace-with-your-downstream-call",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Event').first().json.event_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Event').first().json.event) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "86491d93-9857-42a6-8a4f-c57c08d6a0a9",
+      "name": "Do the work",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e05caef9-3195-42c8-8257-578699aed3d5",
+              "leftValue": "={{ $json.statusCode >= 200 && $json.statusCode < 300 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "649192fa-bbaf-457b-83cd-7e70850e44ff",
+      "name": "Worked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, duplicate: false, status: 'done' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e924f2dc-4a56-464a-86bb-6eafc1e97c88",
+      "name": "Processed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, duplicate: true, status: 'superseded' } }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "e9c78387-694a-4b30-845e-6ecea9effe22",
+      "name": "Superseded",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, duplicate: false, status: 'failed' } }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "1464b020-b0db-4084-8591-a6fad3ef640c",
+      "name": "Failed: sender retries",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, duplicate: true, status: 'done' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "5a52814f-c754-4ed8-8be4-0343cce46b5b",
+      "name": "Duplicate: done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, duplicate: true, status: 'processing' } }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "e0624212-a971-4505-88cd-4753c5812b51",
+      "name": "Duplicate: in progress",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "webhook_claims"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Add my row').first().json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7089d7a0-5894-47d3-8bb6-f655d7447a9c",
+      "name": "Remove my row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        400
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "df4dfdb1-1046-42c9-8bae-2639a02b2334",
+              "leftValue": "={{ $('First row for this key').first().json.status === 'failed' || ($('First row for this key').first().json.status === 'processing' && new Date($('First row for this key').first().json.claimed_at).getTime() < Date.now() - $('Event').first().json.lease_seconds * 1000) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "ba54e1e5-1547-4388-89ea-faf0f2c4050f",
+      "name": "Failed or stale?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "webhook_claims"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('First row for this key').first().json.id }}"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "={{ $('First row for this key').first().json.owner }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "={{ $('First row for this key').first().json.status }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "owner": "={{ $('Event').first().json.owner }}",
+            "status": "processing",
+            "claimed_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "claimed_at",
+              "displayName": "claimed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "23d427dc-811e-47d5-8191-44dfe8ecb18b",
+      "name": "Take over",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4e1bd404-4279-4bf7-8603-eb488e74593a",
+              "leftValue": "={{ ($json.owner ?? '') === $('Event').first().json.owner }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "82519160-dacc-43a6-8ffc-02c5461f24ea",
+      "name": "Took it?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b3e61714-63ff-4106-8977-d56831c8261a",
+              "leftValue": "={{ $('First row for this key').first().json.status === 'done' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "5b4ca4a0-cc55-4b6f-8f44-d8ea8c827b67",
+      "name": "Already done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "webhook_claims"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Claimed').first().json.claim_id }}"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "={{ $('Event').first().json.owner }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "processing"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "done"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "065c3d13-c4ba-4765-8527-61b11946c022",
+      "name": "Mark done",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        -100
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "db6702e7-aa42-45be-820b-c749635246d1",
+              "leftValue": "={{ ($json.owner ?? '') === $('Event').first().json.owner && $json.status === 'done' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "44cd5b91-ea65-44a4-82ae-f4a8cedc20a2",
+      "name": "Still mine?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "webhook_claims"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Claimed').first().json.claim_id }}"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "={{ $('Event').first().json.owner }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "processing"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "failed"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e685c94c-f079-49be-8a4b-bba31d0fa61d",
+      "name": "Mark failed",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        220
+      ],
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event": {
+      "main": [
+        [
+          {
+            "node": "Has an id?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has an id?": {
+      "main": [
+        [
+          {
+            "node": "Add my row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No id: refuse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Do the work": {
+      "main": [
+        [
+          {
+            "node": "Worked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add my row": {
+      "main": [
+        [
+          {
+            "node": "First row for this key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First row for this key": {
+      "main": [
+        [
+          {
+            "node": "Am I first?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Am I first?": {
+      "main": [
+        [
+          {
+            "node": "Claimed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Remove my row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claimed": {
+      "main": [
+        [
+          {
+            "node": "Do the work",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove my row": {
+      "main": [
+        [
+          {
+            "node": "Failed or stale?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failed or stale?": {
+      "main": [
+        [
+          {
+            "node": "Take over",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Already done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Take over": {
+      "main": [
+        [
+          {
+            "node": "Took it?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Took it?": {
+      "main": [
+        [
+          {
+            "node": "Claimed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duplicate: in progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already done?": {
+      "main": [
+        [
+          {
+            "node": "Duplicate: done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duplicate: in progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Worked?": {
+      "main": [
+        [
+          {
+            "node": "Mark done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark done": {
+      "main": [
+        [
+          {
+            "node": "Still mine?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still mine?": {
+      "main": [
+        [
+          {
+            "node": "Processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Superseded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark failed": {
+      "main": [
+        [
+          {
+            "node": "Failed: sender retries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "whDedupeRecvDt01"
+}

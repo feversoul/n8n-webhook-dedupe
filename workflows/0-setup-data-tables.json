@@ -1,0 +1,197 @@
+{
+  "name": "Webhook Dedupe · 0 Setup (Data Tables)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Webhook Dedupe · Setup (Data Tables)\nRun this once: open it and press **Execute workflow**. It creates the data table `webhook_claims` for the Data Table receiver and `dedupe_lab` for the lab. Running it again changes nothing.\n\nThe webhook does the same for scripted installs (`POST dedupe/setup/data-tables`). You can delete it.",
+        "width": 560,
+        "height": 200,
+        "color": 4
+      },
+      "id": "88b581e1-a904-4082-89fa-9488062eb62a",
+      "name": "About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -260
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b7a04cc9-3a8f-4fba-8979-c79024b834aa",
+      "name": "Run once",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/setup/data-tables",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f5d35dfd-5e04-4e16-80cc-bf958a63eb86",
+      "name": "Or call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        180
+      ],
+      "webhookId": "5c8dd900-58c6-4248-895c-fb87424510c4",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "webhook_claims",
+        "columns": {
+          "column": [
+            {
+              "name": "event_key",
+              "type": "string"
+            },
+            {
+              "name": "owner",
+              "type": "string"
+            },
+            {
+              "name": "status",
+              "type": "string"
+            },
+            {
+              "name": "claimed_at",
+              "type": "date"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      },
+      "id": "1cd40cd8-29e5-4911-8670-2c52181ab6f9",
+      "name": "Create claims table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "dedupe_lab",
+        "columns": {
+          "column": [
+            {
+              "name": "method",
+              "type": "string"
+            },
+            {
+              "name": "event_key",
+              "type": "string"
+            },
+            {
+              "name": "owner",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      },
+      "id": "0fc9b989-80c7-41c4-8bae-9d73865396fb",
+      "name": "Create lab table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c3b9ea02-c16e-4ffc-824c-03dba1ac3cb2",
+      "name": "Done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Run once": {
+      "main": [
+        [
+          {
+            "node": "Create claims table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Or call": {
+      "main": [
+        [
+          {
+            "node": "Create claims table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create claims table": {
+      "main": [
+        [
+          {
+            "node": "Create lab table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create lab table": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "whDedupeSetupDt1"
+}

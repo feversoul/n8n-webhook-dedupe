@@ -1,0 +1,12 @@
+# Second overlay: the same tests with n8n itself on PostgreSQL instead of
+# SQLite (its Data Tables and the Remove Duplicates history then live there).
+#   npm run test:e2e:postgres
+services:
+  n8n:
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: dedupe
+      DB_POSTGRESDB_USER: dedupe
+      DB_POSTGRESDB_PASSWORD: test

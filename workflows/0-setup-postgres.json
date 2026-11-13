@@ -1,0 +1,136 @@
+{
+  "name": "Webhook Dedupe · 0 Setup (Postgres)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Webhook Dedupe · Setup (Postgres)\nRun this once: open it and press **Execute workflow**. It creates the table `webhook_claims` for the Postgres receiver and `dedupe_lab_claims` for the lab, in the database of the **Webhook Dedupe Postgres** credential. Running it again changes nothing.\n\nThe primary key on `event_key` is the whole point: it is what makes the claim atomic.",
+        "width": 560,
+        "height": 200,
+        "color": 4
+      },
+      "id": "272db58a-813b-437d-89c8-2357be92050c",
+      "name": "About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -260
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "596393ba-c50c-4fe3-8953-d8532f245f6d",
+      "name": "Run once",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/setup/postgres",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "074f6a98-29c2-46f0-8546-73b10a42714b",
+      "name": "Or call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        180
+      ],
+      "webhookId": "b148ffe9-8814-44b9-85ca-576fe0e45f66",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS webhook_claims (\n  event_key   text PRIMARY KEY,\n  status      text NOT NULL DEFAULT 'processing',\n  owner       text NOT NULL,\n  attempts    integer NOT NULL DEFAULT 1,\n  claimed_at  timestamptz NOT NULL DEFAULT now(),\n  finished_at timestamptz\n);\nCREATE TABLE IF NOT EXISTS dedupe_lab_claims (\n  method    text NOT NULL,\n  event_key text NOT NULL,\n  owner     text NOT NULL,\n  PRIMARY KEY (method, event_key)\n);",
+        "options": {}
+      },
+      "id": "0d3cca8f-2139-4952-889b-85273e9294c8",
+      "name": "Create tables",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        0
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "webhookDedupePg",
+          "name": "Webhook Dedupe Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "4c491809-de31-4027-8b40-95489d4bdf75",
+      "name": "Done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Run once": {
+      "main": [
+        [
+          {
+            "node": "Create tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Or call": {
+      "main": [
+        [
+          {
+            "node": "Create tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create tables": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "whDedupeSetupPg1"
+}

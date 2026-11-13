@@ -1,0 +1,61 @@
+# n8n with the workflows already imported, a PostgreSQL for the claims table
+# and a small stand-in for "the work", to try it locally.
+#   cp .env.example .env   (fill it in)   then   docker compose up -d
+# Already have n8n (Cloud or your own)? You do not need this file: see
+# "Add it to your n8n" in the README.
+
+services:
+  n8n:
+    image: ${N8N_IMAGE:-n8nio/n8n:2.47.7}
+    restart: unless-stopped
+    entrypoint: ["sh", "/bootstrap/bootstrap.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      # The secret the sender puts in the X-Webhook-Key header.
+      WEBHOOK_KEY: ${WEBHOOK_KEY:?set WEBHOOK_KEY in .env}
+      CLAIMS_DB_PASSWORD: ${CLAIMS_DB_PASSWORD:?set CLAIMS_DB_PASSWORD in .env}
+      # Where "Do the work" posts each event once.
+      WORK_URL: ${WORK_URL:-http://downstream:8080/work}
+      # Seconds before a claim that is still "processing" may be taken over.
+      LEASE_SECONDS: ${LEASE_SECONDS:-}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/bootstrap/workflows:ro
+      - ./docker/bootstrap.sh:/bootstrap/bootstrap.sh:ro
+      - ./docker/prepare.mjs:/bootstrap/prepare.mjs:ro
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+
+  # Holds webhook_claims for the Postgres receiver. n8n itself stays on SQLite.
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dedupe
+      POSTGRES_PASSWORD: ${CLAIMS_DB_PASSWORD:?set CLAIMS_DB_PASSWORD in .env}
+      POSTGRES_DB: dedupe
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dedupe -d dedupe"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    volumes:
+      - claims_data:/var/lib/postgresql/data
+
+  # Stand-in for the call your workflow makes once per event. It counts the
+  # calls per Idempotency-Key: GET /calls?key=demo:evt_1
+  downstream:
+    image: node:22-alpine
+    restart: unless-stopped
+    command: ["node", "/app/downstream.mjs"]
+    volumes:
+      - ./docker/downstream.mjs:/app/downstream.mjs:ro
+    ports:
+      - "${DOWNSTREAM_PORT:-8080}:8080"
+
+volumes:
+  n8n_data:
+  claims_data:

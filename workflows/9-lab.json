@@ -1,0 +1,1345 @@
+{
+  "name": "Webhook Dedupe · 9 Lab",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Webhook Dedupe · Lab\nSix ways to claim an event, one webhook each: `POST dedupe/lab/<method>` with `{ \"event_key\": \"...\" }`. The answer is `{ claimed: true }` when this call was let through.\n\nThis workflow is for measuring, not for production. The tests send one key 40 times at once and count how many calls were let through. Use the two receiver workflows for real traffic.\n\n- `dt-check-then-insert`: Data Table: If Row Does Not Exist, then Insert\n- `dt-upsert`: Data Table: Upsert, let through when the row is new\n- `dt-insert-then-first`: Data Table: Insert, then read the first row for the key\n- `remove-duplicates`: Remove Duplicates: Remove Items Processed in Previous Executions\n- `pg-on-conflict`: Postgres: INSERT ... ON CONFLICT DO NOTHING RETURNING\n- `pg-unique-error`: Postgres: plain INSERT, unique violation on the error output",
+        "width": 760,
+        "height": 340,
+        "color": 4
+      },
+      "id": "f15054b0-d3b1-4474-8c53-c4434121d263",
+      "name": "About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/lab/dt-check-then-insert",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c0fe9834-0cd0-44a7-896e-a23ea7ab46da",
+      "name": "dt-check-then-insert",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "fd44318b-d0a1-44c3-8d53-a0e70dd5933a",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'dt-check-then-insert', event_key: $('dt-check-then-insert').first().json.body.event_key, claimed: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b7c1ea91-ede3-4773-80f0-669a18b70bd9",
+      "name": "dt-check-then-insert · let through",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        -70
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'dt-check-then-insert', event_key: $('dt-check-then-insert').first().json.body.event_key, claimed: false } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "78c7efd8-4314-493b-8c52-f9d466a47e84",
+      "name": "dt-check-then-insert · duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "rowNotExists",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "dedupe_lab"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "method",
+              "condition": "eq",
+              "keyValue": "dt-check-then-insert"
+            },
+            {
+              "keyName": "event_key",
+              "condition": "eq",
+              "keyValue": "={{ $('dt-check-then-insert').first().json.body.event_key }}"
+            }
+          ]
+        }
+      },
+      "id": "022703de-717c-48d2-8084-f37039434044",
+      "name": "dt-check-then-insert · not seen?",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a006e938-08a8-4f93-88d5-e68f5909c2a5",
+              "leftValue": "={{ !!$json.body }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "f15717a8-6ddb-41b1-80b1-cb8986714f0e",
+      "name": "dt-check-then-insert · new?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "dedupe_lab"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "method": "dt-check-then-insert",
+            "event_key": "={{ $('dt-check-then-insert').first().json.body.event_key }}",
+            "owner": "={{ $execution.id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "method",
+              "displayName": "method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_key",
+              "displayName": "event_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "35065d36-7d70-4672-8bb4-78478ab1e8a3",
+      "name": "dt-check-then-insert · save",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        -70
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/lab/dt-upsert",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4ee8e95c-7f65-44b8-88e7-76151b1aecb1",
+      "name": "dt-upsert",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "8d80cb2a-f6ab-4e66-8b31-d7d53dfc8a6c",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'dt-upsert', event_key: $('dt-upsert').first().json.body.event_key, claimed: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "46d722d8-da48-45d9-8046-868666dd1e75",
+      "name": "dt-upsert · let through",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        230
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'dt-upsert', event_key: $('dt-upsert').first().json.body.event_key, claimed: false } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "47e493c9-754f-483b-8e5a-13d82cc64839",
+      "name": "dt-upsert · duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        390
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "dedupe_lab"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "method",
+              "condition": "eq",
+              "keyValue": "dt-upsert"
+            },
+            {
+              "keyName": "event_key",
+              "condition": "eq",
+              "keyValue": "={{ $('dt-upsert').first().json.body.event_key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "method": "dt-upsert",
+            "event_key": "={{ $('dt-upsert').first().json.body.event_key }}",
+            "owner": "={{ $execution.id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "method",
+              "displayName": "method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_key",
+              "displayName": "event_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "19125021-47b5-4daa-8c26-4afad8fd8cc4",
+      "name": "dt-upsert · upsert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a0f0b41e-ae77-42d8-89ef-5bf9e0fc92d9",
+              "leftValue": "={{ $json.id !== undefined && new Date($json.createdAt).getTime() === new Date($json.updatedAt).getTime() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "04f68af8-6e36-4c06-8048-9f82563b5590",
+      "name": "dt-upsert · new?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/lab/dt-insert-then-first",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e664f35f-07a5-4afc-879a-3701f12ca985",
+      "name": "dt-insert-then-first",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        600
+      ],
+      "webhookId": "4a257d0c-bf1b-413e-842e-935cbd1fcf5d",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'dt-insert-then-first', event_key: $('dt-insert-then-first').first().json.body.event_key, claimed: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "13bab8ab-3121-4b5d-8a01-b2589b8d53ae",
+      "name": "dt-insert-then-first · let through",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        530
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'dt-insert-then-first', event_key: $('dt-insert-then-first').first().json.body.event_key, claimed: false } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "301353ad-b2e0-4913-8617-27ab2c54e1b8",
+      "name": "dt-insert-then-first · duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        690
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "dedupe_lab"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "method": "dt-insert-then-first",
+            "event_key": "={{ $('dt-insert-then-first').first().json.body.event_key }}",
+            "owner": "={{ $execution.id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "method",
+              "displayName": "method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_key",
+              "displayName": "event_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "52727bcf-2d89-4c6e-86d9-e85ef9354070",
+      "name": "dt-insert-then-first · insert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "dedupe_lab"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "method",
+              "condition": "eq",
+              "keyValue": "dt-insert-then-first"
+            },
+            {
+              "keyName": "event_key",
+              "condition": "eq",
+              "keyValue": "={{ $('dt-insert-then-first').first().json.body.event_key }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1,
+        "orderBy": true,
+        "orderByColumn": "id",
+        "orderByDirection": "ASC"
+      },
+      "id": "40950b9f-63d8-486f-83b9-ba1d6f149afb",
+      "name": "dt-insert-then-first · first row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b74cdccb-5a71-4abb-8ee8-eaf8d0878dd4",
+              "leftValue": "={{ $json.id === $('dt-insert-then-first · insert').first().json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "734f7736-4fb4-42df-85a1-e3b4c4ced7b5",
+      "name": "dt-insert-then-first · mine?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/lab/remove-duplicates",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f3f4a565-206a-4095-8738-f95da9d7d70e",
+      "name": "remove-duplicates",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        900
+      ],
+      "webhookId": "a17c9cb9-50ea-48bf-87b4-2caa265eabd6",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'remove-duplicates', event_key: $('remove-duplicates').first().json.body.event_key, claimed: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "03d6097e-29a8-46a5-86ec-2e00752f3638",
+      "name": "remove-duplicates · let through",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        830
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'remove-duplicates', event_key: $('remove-duplicates').first().json.body.event_key, claimed: false } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "8a79d306-4888-4ac5-8fa6-e486764224cf",
+      "name": "remove-duplicates · duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        990
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "logic": "removeItemsWithAlreadySeenKeyValues",
+        "dedupeValue": "={{ $json.body.event_key }}",
+        "options": {
+          "scope": "node",
+          "historySize": 1000000
+        }
+      },
+      "id": "6317a442-f6ba-4786-868f-bf942ceaa149",
+      "name": "remove-duplicates · seen before?",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        240,
+        900
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c17771a5-a912-4e35-8d0a-96a0b4978523",
+              "leftValue": "={{ !!$json.body }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "9e2a62ba-868e-4b87-8100-a3c2ac2ae2b2",
+      "name": "remove-duplicates · new?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/lab/pg-on-conflict",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "000ec2da-c162-4cad-8250-9ddb8a07273f",
+      "name": "pg-on-conflict",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1200
+      ],
+      "webhookId": "2f49185a-7285-45ff-85b3-0fbc2356fd2b",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'pg-on-conflict', event_key: $('pg-on-conflict').first().json.body.event_key, claimed: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "86635860-f6d0-44a1-89ee-8c198fa7a934",
+      "name": "pg-on-conflict · let through",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1130
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'pg-on-conflict', event_key: $('pg-on-conflict').first().json.body.event_key, claimed: false } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "674cac0f-c83c-4262-8aec-d363d913e983",
+      "name": "pg-on-conflict · duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1290
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dedupe_lab_claims (method, event_key, owner)\nVALUES ($1, $2, $3)\nON CONFLICT (method, event_key) DO NOTHING\nRETURNING owner;",
+        "options": {
+          "queryReplacement": "={{ ['pg-on-conflict', $json.body.event_key, String($execution.id)] }}"
+        }
+      },
+      "id": "07f09208-5050-4fbe-86b2-b59b05303c67",
+      "name": "pg-on-conflict · claim",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        1200
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "webhookDedupePg",
+          "name": "Webhook Dedupe Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9a623519-1851-4746-87fd-5c9fa8c50003",
+              "leftValue": "={{ ($json.owner ?? '') === String($execution.id) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "e3962164-56b7-46ed-8f63-2b3b1eb39cb7",
+      "name": "pg-on-conflict · mine?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/lab/pg-unique-error",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "5575c360-20bd-453c-8834-8a790f17f980",
+      "name": "pg-unique-error",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1500
+      ],
+      "webhookId": "f9567293-0cf1-45b7-81d3-112f00725b97",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'pg-unique-error', event_key: $('pg-unique-error').first().json.body.event_key, claimed: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "01b0162d-4ec4-452b-8a17-7f684f98725a",
+      "name": "pg-unique-error · let through",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1430
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'pg-unique-error', event_key: $('pg-unique-error').first().json.body.event_key, claimed: false } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a3897863-09f2-4a5b-8f49-775ebff34e99",
+      "name": "pg-unique-error · duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1590
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dedupe_lab_claims (method, event_key, owner)\nVALUES ($1, $2, $3)\nRETURNING owner;",
+        "options": {
+          "queryReplacement": "={{ ['pg-unique-error', $json.body.event_key, String($execution.id)] }}"
+        }
+      },
+      "id": "d1f2a7b8-d8ab-4542-81ed-cb7fb9d84f06",
+      "name": "pg-unique-error · insert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        1500
+      ],
+      "alwaysOutputData": false,
+      "credentials": {
+        "postgres": {
+          "id": "webhookDedupePg",
+          "name": "Webhook Dedupe Postgres"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5c87b38e-1d46-4e14-8e39-ee590407d4f8",
+              "leftValue": "={{ /duplicate key|unique constraint/i.test(JSON.stringify($json)) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "a2b1b361-0e08-45ba-8338-a7b8872f5d91",
+      "name": "pg-unique-error · unique violation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        1590
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { method: 'pg-unique-error', error: 'claim failed' } }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "cfab6cc5-dc61-48cb-852b-35255e3ac4a6",
+      "name": "pg-unique-error · fault",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1750
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/lab/rows",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "205e5589-3e7f-4472-835b-700d4ea54c9e",
+      "name": "rows",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1800
+      ],
+      "webhookId": "1bc93a52-4106-4287-847c-c31494f4693b",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "dedupe_lab"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "method",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.method }}"
+            },
+            {
+              "keyName": "event_key",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.event_key }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "3adc6266-ea9d-4c42-8efe-470edce19baf",
+      "name": "rows · read",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        1800
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { rows: $input.all().filter((item) => item.json.id !== undefined).length } }];"
+      },
+      "id": "82dc4827-c94c-4d36-8f77-897c033fcb55",
+      "name": "rows · count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        1800
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { rows: $json.rows } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "20a7ee41-8c08-40df-8523-c0d7ec912b96",
+      "name": "rows · answer",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        1800
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "dt-check-then-insert": {
+      "main": [
+        [
+          {
+            "node": "dt-check-then-insert · not seen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-check-then-insert · not seen?": {
+      "main": [
+        [
+          {
+            "node": "dt-check-then-insert · new?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-check-then-insert · new?": {
+      "main": [
+        [
+          {
+            "node": "dt-check-then-insert · save",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "dt-check-then-insert · duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-check-then-insert · save": {
+      "main": [
+        [
+          {
+            "node": "dt-check-then-insert · let through",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-upsert": {
+      "main": [
+        [
+          {
+            "node": "dt-upsert · upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-upsert · upsert": {
+      "main": [
+        [
+          {
+            "node": "dt-upsert · new?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-upsert · new?": {
+      "main": [
+        [
+          {
+            "node": "dt-upsert · let through",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "dt-upsert · duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-insert-then-first": {
+      "main": [
+        [
+          {
+            "node": "dt-insert-then-first · insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-insert-then-first · insert": {
+      "main": [
+        [
+          {
+            "node": "dt-insert-then-first · first row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-insert-then-first · first row": {
+      "main": [
+        [
+          {
+            "node": "dt-insert-then-first · mine?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dt-insert-then-first · mine?": {
+      "main": [
+        [
+          {
+            "node": "dt-insert-then-first · let through",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "dt-insert-then-first · duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "remove-duplicates": {
+      "main": [
+        [
+          {
+            "node": "remove-duplicates · seen before?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "remove-duplicates · seen before?": {
+      "main": [
+        [
+          {
+            "node": "remove-duplicates · new?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "remove-duplicates · new?": {
+      "main": [
+        [
+          {
+            "node": "remove-duplicates · let through",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "remove-duplicates · duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pg-on-conflict": {
+      "main": [
+        [
+          {
+            "node": "pg-on-conflict · claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pg-on-conflict · claim": {
+      "main": [
+        [
+          {
+            "node": "pg-on-conflict · mine?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pg-on-conflict · mine?": {
+      "main": [
+        [
+          {
+            "node": "pg-on-conflict · let through",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "pg-on-conflict · duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pg-unique-error": {
+      "main": [
+        [
+          {
+            "node": "pg-unique-error · insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pg-unique-error · insert": {
+      "main": [
+        [
+          {
+            "node": "pg-unique-error · let through",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "pg-unique-error · unique violation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pg-unique-error · unique violation?": {
+      "main": [
+        [
+          {
+            "node": "pg-unique-error · duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "pg-unique-error · fault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rows": {
+      "main": [
+        [
+          {
+            "node": "rows · read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rows · read": {
+      "main": [
+        [
+          {
+            "node": "rows · count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rows · count": {
+      "main": [
+        [
+          {
+            "node": "rows · answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "id": "whDedupeLab00001"
+}

@@ -1,0 +1,12 @@
+# Overlay for the end-to-end tests. Paths are relative to the repository root.
+#   npm run test:e2e
+services:
+  n8n:
+    restart: "no"
+    mem_limit: 1500m
+  postgres:
+    restart: "no"
+    mem_limit: 512m
+  downstream:
+    restart: "no"
+    mem_limit: 256m

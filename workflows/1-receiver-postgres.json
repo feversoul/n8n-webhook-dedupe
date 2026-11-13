@@ -1,0 +1,663 @@
+{
+  "name": "Webhook Dedupe · 1 Receiver (Postgres)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Webhook Dedupe · Receiver on Postgres\n`POST dedupe/postgres` with a JSON body that has an `id`. The event is handled once, however many times and however close together it is delivered.\n\n**Claim** is one statement on a table with `event_key` as primary key. Exactly one run gets its own token back. A claim that failed, or that has been `processing` longer than the lease, can be taken by the next delivery in the same statement.\n\n**Mark done** and **Mark failed** only change the row while it still carries this run's token.\n\nSettings are at the top of the **Event** node. Put your own call in **Do the work**; it gets the event key as `Idempotency-Key`.",
+        "width": 640,
+        "height": 340,
+        "color": 4
+      },
+      "id": "1745431f-725b-42df-839e-769283e37deb",
+      "name": "About",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### The conflict path\n- **Duplicate: done** answers `200`. The event was handled, the sender can stop.\n- **Duplicate: in progress** answers `409`. Another run holds the claim and has not finished. A `2xx` here would tell the sender to stop while that run can still crash. With `409` it retries later and then finds the event done, failed or stale.\n- **Failed** answers `500` and frees the claim, so the next delivery runs again.\n- **Superseded**: this run was so slow that a retry took the claim over. It may not mark the event done.\n\nIf your sender gives up after a few non-2xx answers, change `409` to `200` and accept that a crash in that moment needs a manual replay.",
+        "width": 640,
+        "height": 300,
+        "color": 5
+      },
+      "id": "1681ade7-6dbf-47d8-8dcb-3efe0e0ca1d6",
+      "name": "Conflict",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dedupe/postgres",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e06d771e-0814-4a9f-87b1-5c2e905c64be",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "510d2f79-6676-4f39-822f-9d356365d9d2",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "webhookDedupeKey",
+          "name": "Webhook Dedupe Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Settings.\nconst SOURCE = 'demo'; // scope of the key: one value per sender, so ids of two senders cannot collide\nconst LEASE_SECONDS = 900; // a claim still \"processing\" after this long may be taken over. Set it longer than your slowest run.\n\nconst body = $input.first().json.body ?? {};\n// Where the sender puts its event id. Change this line for your sender.\nconst id = body.id === undefined || body.id === null ? '' : String(body.id).trim();\nconst hex = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0');\nreturn [\n  {\n    json: {\n      event_key: id ? `${SOURCE}:${id}` : '',\n      // The run token. Every later write checks it, so a run that lost its\n      // claim cannot mark the event done.\n      owner: `${$execution.id}-${hex()}${hex()}`,\n      lease_seconds: LEASE_SECONDS,\n      event: body,\n    },\n  },\n];"
+      },
+      "id": "23b0f74c-1b7f-43fc-8e46-116e32504338",
+      "name": "Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4e4da66e-8234-45fa-8f89-35c3ec538826",
+              "leftValue": "={{ !!$json.event_key }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "624a818b-2cdd-462e-8289-684fff90b84f",
+      "name": "Has an id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, error: 'missing event id' } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "7de6812c-078f-4f0f-8b4e-f4e93ceb3cac",
+      "name": "No id: refuse",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO webhook_claims (event_key, status, owner, claimed_at)\nVALUES ($1, 'processing', $2, now())\nON CONFLICT (event_key) DO UPDATE\n  SET status = 'processing', owner = EXCLUDED.owner, claimed_at = now(), attempts = webhook_claims.attempts + 1\n  WHERE webhook_claims.status = 'failed'\n     OR (webhook_claims.status = 'processing'\n         AND webhook_claims.claimed_at < now() - make_interval(secs => $3::int))\nRETURNING owner, attempts;",
+        "options": {
+          "queryReplacement": "={{ [$json.event_key, $json.owner, $json.lease_seconds] }}"
+        }
+      },
+      "id": "93b12424-a190-43b0-8b8d-d431c98342a7",
+      "name": "Claim",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        0
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "webhookDedupePg",
+          "name": "Webhook Dedupe Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1679f3a8-c7b1-4688-8636-3ad0cb58338d",
+              "leftValue": "={{ ($json.owner ?? '') === $('Event').first().json.owner }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "5cb4c9c4-7031-438e-8e69-1a71b707bed6",
+      "name": "Mine?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://example.com/replace-with-your-downstream-call",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Event').first().json.event_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Event').first().json.event) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "016231d1-bd09-4bcd-8591-836af4795bff",
+      "name": "Do the work",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ba052877-64e3-44a1-89fe-2afa760bab88",
+              "leftValue": "={{ $json.statusCode >= 200 && $json.statusCode < 300 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "a55ad4fe-bd87-4559-8ca8-cb10025f4c37",
+      "name": "Worked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, duplicate: false, status: 'done' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e7723e5b-1634-43ca-824d-f118b73824ae",
+      "name": "Processed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, duplicate: true, status: 'superseded' } }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "7baf986d-50cd-41c4-8dfd-15e396563c1a",
+      "name": "Superseded",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, duplicate: false, status: 'failed' } }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "a909910f-851c-46d9-863b-196ba0b29eba",
+      "name": "Failed: sender retries",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, duplicate: true, status: 'done' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c45390d4-32f0-469e-85da-2f663051fed5",
+      "name": "Duplicate: done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, duplicate: true, status: 'processing' } }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "bec49b23-2024-4e73-8a25-186c1e6f7726",
+      "name": "Duplicate: in progress",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE webhook_claims SET status = 'done', finished_at = now()\nWHERE event_key = $1 AND owner = $2 AND status = 'processing'\nRETURNING owner;",
+        "options": {
+          "queryReplacement": "={{ [$('Event').first().json.event_key, $('Event').first().json.owner] }}"
+        }
+      },
+      "id": "f7af8c43-b88f-4589-8356-54f2610cdcfc",
+      "name": "Mark done",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1540,
+        -100
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "webhookDedupePg",
+          "name": "Webhook Dedupe Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "27e23926-0083-429d-8648-264fc8a3ec97",
+              "leftValue": "={{ ($json.owner ?? '') === $('Event').first().json.owner }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "bdda90b3-13a7-4471-8330-88184d77013f",
+      "name": "Still mine?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE webhook_claims SET status = 'failed', finished_at = now()\nWHERE event_key = $1 AND owner = $2 AND status = 'processing'\nRETURNING owner;",
+        "options": {
+          "queryReplacement": "={{ [$('Event').first().json.event_key, $('Event').first().json.owner] }}"
+        }
+      },
+      "id": "df0e931b-0085-4f19-8234-e364181b49fc",
+      "name": "Mark failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1540,
+        220
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "webhookDedupePg",
+          "name": "Webhook Dedupe Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT status FROM webhook_claims WHERE event_key = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('Event').first().json.event_key] }}"
+        }
+      },
+      "id": "add15227-2cc0-40fa-8e15-ccdbb954797d",
+      "name": "Current state",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        500
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "webhookDedupePg",
+          "name": "Webhook Dedupe Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f28611ff-a532-4f47-8959-2b06bdfbf7a1",
+              "leftValue": "={{ $json.status === 'done' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "830dda4d-0ddf-4a94-8e08-cb3d782382c2",
+      "name": "Already done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        500
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event": {
+      "main": [
+        [
+          {
+            "node": "Has an id?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has an id?": {
+      "main": [
+        [
+          {
+            "node": "Claim",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No id: refuse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Do the work": {
+      "main": [
+        [
+          {
+            "node": "Worked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim": {
+      "main": [
+        [
+          {
+            "node": "Mine?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mine?": {
+      "main": [
+        [
+          {
+            "node": "Do the work",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Current state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Worked?": {
+      "main": [
+        [
+          {
+            "node": "Mark done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark done": {
+      "main": [
+        [
+          {
+            "node": "Still mine?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still mine?": {
+      "main": [
+        [
+          {
+            "node": "Processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Superseded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark failed": {
+      "main": [
+        [
+          {
+            "node": "Failed: sender retries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Current state": {
+      "main": [
+        [
+          {
+            "node": "Already done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already done?": {
+      "main": [
+        [
+          {
+            "node": "Duplicate: done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duplicate: in progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "whDedupeRecvPg01"
+}

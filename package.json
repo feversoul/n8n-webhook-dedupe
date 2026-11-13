@@ -1,0 +1,15 @@
+{
+  "name": "n8n-webhook-dedupe",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Which n8n claim methods let a duplicate webhook through under real concurrency, measured, plus two receivers that hold",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test:e2e": "node scripts/e2e.mjs",
+    "test:e2e:postgres": "node scripts/e2e.mjs postgres"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
