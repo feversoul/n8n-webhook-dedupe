@@ -54,9 +54,14 @@ async function until(check, timeoutMs = 30_000) {
 }
 
 before(async () => {
+  // Ready means both setups have run: the Data Table answers with a row count
+  // and the Postgres claim answers with a decision. A bare 200 is not enough,
+  // because while n8n starts every path answers 200 with a "starting up" page.
   await until(async () => {
     try {
-      return (await call('lab/rows', { method: 'ready', event_key: 'ready' })).status === 200;
+      const rows = await call('lab/rows', { method: 'ready', event_key: 'ready' });
+      const claim = await call('lab/pg-on-conflict', { event_key: 'ready' });
+      return rows.status === 200 && typeof rows.json?.rows === 'number' && claim.status === 200 && typeof claim.json?.claimed === 'boolean';
     } catch {
       return false;
     }
@@ -203,13 +208,19 @@ for (const receiver of ['postgres', 'data-table']) {
     const slow = deliver(event);
     await sleep(1000);
     assert.equal((await deliver(event)).status, 409, 'inside the lease the claim holds');
-    await sleep(LEASE_MS + 500);
-    await sink.control(event, {});
-    const retries = await times(20, () => deliver(event));
-    assert.ok(retries.every(known));
-    assert.equal(processed(retries).length, 1, 'exactly one retry takes the stale claim');
+    await sleep(LEASE_MS + 2000);
+    // The retry that takes over is slow too, so it still holds the claim as
+    // "processing" when the first run comes back. Only the owner token can
+    // then stop the first run from marking the event done.
+    await sink.control(event, { delay_ms: 5000 });
+    const retrying = times(20, () => deliver(event));
     const late = await slow;
     assert.deepEqual([late.status, late.json], [409, { ok: false, duplicate: true, status: 'superseded' }]);
+    const between = await deliver(event);
+    assert.deepEqual([between.status, between.json?.status], [409, 'processing'], 'the event is not done while the retry that took over is still working');
+    const retries = await retrying;
+    assert.ok(retries.every(known));
+    assert.equal(processed(retries).length, 1, 'exactly one retry takes the stale claim');
     // Both runs reached the downstream call, with the same Idempotency-Key.
     assert.deepEqual(await sink.calls(event), { calls: 2, ok: 2 });
     assert.equal((await deliver(event)).json.status, 'done');

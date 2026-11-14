@@ -8,31 +8,31 @@ Everything here was run on a real n8n 2.47.7, with the same event sent 40 times 
 
 | Question                                | Answer in this repo                                                                                                                                                                   |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Does "look up, then write" leave a gap? | Yes, and it is wide. With a Data Table, 2 to 13 of 40 copies got through on SQLite, and all 40 on PostgreSQL. See [What was measured](#what-was-measured).                            |
+| Does "look up, then write" leave a gap? | Yes, and it is wide. With a Data Table, up to 15 of 40 copies got through in a round on SQLite, and all 40 on PostgreSQL. See [What was measured](#what-was-measured).                |
 | Database unique constraint?             | Holds. `INSERT ... ON CONFLICT DO NOTHING RETURNING` let exactly one through in every round. So did a plain `INSERT` with the error output, with one setting to watch.                |
 | Data Tables?                            | They have no unique constraint. "If row does not exist, then insert" races and Upsert races on PostgreSQL. **Insert first, then read the first row for the key** held in every round. |
-| Remove Duplicates node?                 | Not for this. Up to 38 of 40 copies got through, and it also forgot events it had already seen.                                                                                       |
+| Remove Duplicates node?                 | Not for this. Up to 40 of 40 copies got through, and it also forgot events it had already seen.                                                                                       |
 | How do you handle the conflict path?    | `200` when the event is already done, `409` while another run still has it, `500` when the work failed (the claim is freed). See [The conflict path](#the-conflict-path).             |
 
 ## What was measured
 
-The lab workflow (`workflows/9-lab.json`) has six webhooks, one per method, each reduced to the claim alone. The test sends one event key 40 times at the same instant, 15 rounds, and counts how many calls were let through. One per round is correct, so the total should be 15.
+The lab workflow (`workflows/9-lab.json`) has six webhooks, one per method, each reduced to the claim alone. The test sends one event key 40 times at the same instant, 15 rounds, and counts how many calls were let through. One per round is correct, so the total should be 15. For the methods that race, the table gives the range over the runs so far (15 rounds each, on my machine and in GitHub Actions), because the count is different every time.
 
-| Method                                                            | n8n on SQLite                                                     | n8n on PostgreSQL                                                 |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Data Table: If Row Does Not Exist, then Insert                    | **races**: 142 let through, worst round 13 of 40                  | **races**: 600 let through, all 40 in every round                 |
-| Data Table: Upsert                                                | 15, one per round                                                 | **races**: 30 let through, two in every round                     |
-| Data Table: Insert, then read the first row for the key           | 15, one per round                                                 | 15, one per round                                                 |
-| Remove Duplicates (Remove Items Processed in Previous Executions) | **races**: 335 let through, worst round 38 of 40, 22 calls failed | **races**: 431 let through, worst round 36 of 40, 32 calls failed |
-| Postgres: `INSERT ... ON CONFLICT DO NOTHING RETURNING`           | 15, one per round                                                 | 15, one per round                                                 |
-| Postgres: plain `INSERT`, unique violation on the error output    | 15, one per round                                                 | 15, one per round                                                 |
+| Method                                                            | n8n on SQLite                                                                       | n8n on PostgreSQL                                                                    |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Data Table: If Row Does Not Exist, then Insert                    | **races**: 110 to 172 let through, worst round 13 to 15 of 40                       | **races**: 600 let through, all 40 in every round                                    |
+| Data Table: Upsert                                                | 15, one per round                                                                   | **races**: 24 to 33 let through, one to four per round                               |
+| Data Table: Insert, then read the first row for the key           | 15, one per round                                                                   | 15, one per round                                                                    |
+| Remove Duplicates (Remove Items Processed in Previous Executions) | **races**: 316 to 464 let through, worst round 38 to 40 of 40, 1 to 37 calls failed | **races**: 430 to 475 let through, worst round 34 to 39 of 40, 32 to 37 calls failed |
+| Postgres: `INSERT ... ON CONFLICT DO NOTHING RETURNING`           | 15, one per round                                                                   | 15, one per round                                                                    |
+| Postgres: plain `INSERT`, unique violation on the error output    | 15, one per round                                                                   | 15, one per round                                                                    |
 
 "n8n on SQLite / PostgreSQL" is the database n8n itself runs on. It decides how Data Tables and the Remove Duplicates history behave. The two Postgres methods use a separate claims table in both runs.
 
 Notes on the rows:
 
-- **If Row Does Not Exist, then Insert** is the lookup-then-write gap from the question. It is not a rare race: every round let several copies through.
-- **Upsert** cannot tell you whether it inserted or updated, so the lab lets a call through when the returned row has the same `createdAt` and `updatedAt`. On SQLite it held in every round. On PostgreSQL two copies both inserted in every round, leaving two rows for one key. Do not build a claim on it.
+- **If Row Does Not Exist, then Insert** is the lookup-then-write gap from the question. It is not a rare race: almost every round let several copies through.
+- **Upsert** cannot tell you whether it inserted or updated, so the lab lets a call through when the returned row has the same `createdAt` and `updatedAt`. On SQLite it held in every round. On PostgreSQL more than one copy inserted in most rounds (one to four were let through), leaving two rows for one key. Do not build a claim on it.
 - **Remove Duplicates** reads its history, adds the new value and writes the whole history back. Concurrent runs overwrite each other. A second test sent 40 different events at once and then each one again, one by one: 38 of the 40 second deliveries were let through as new, on both databases.
 - **Plain `INSERT` with the error output**: turn **Always Output Data** off on that Postgres node. With it on, a failed insert also sends an empty item down the success output, and the duplicate runs the work.
 - **Insert, then first row** works because every run can see the same order: row ids only go up, and each run reads after its own insert. One limit, below, for n8n on PostgreSQL with several workers.
@@ -122,14 +122,14 @@ The compose file starts n8n, a PostgreSQL for the claims table and a small stand
 
 `npm run test:e2e` starts a real n8n 2.47.7, imports these workflows and calls them over HTTP. `npm run test:e2e:postgres` does the same with n8n itself on PostgreSQL. Both pass: 18 tests each, 6 for the lab and 6 for each receiver.
 
-| Test, for both receivers                           | Result with n8n on SQLite and on PostgreSQL                                                       |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| 40 copies of one event at once, 10 rounds          | the work ran once per event, one delivery answered "processed", a later duplicate got `200 done`  |
-| 25 different events, 4 copies each, all at once    | every event ran once                                                                              |
-| Duplicate while the first run is still working     | `409 processing`, the work ran once                                                               |
-| Work fails, then 20 retries at once                | first answer `500`, exactly one retry runs the work again                                         |
-| Run slower than the lease, then 20 retries at once | exactly one retry takes over, the slow run gets `409 superseded` and does not mark the event done |
-| No key, no event id                                | `403`, `400`, nothing reaches the work                                                            |
+| Test, for both receivers                           | Result with n8n on SQLite and on PostgreSQL                                                                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 40 copies of one event at once, 10 rounds          | the work ran once per event, one delivery answered "processed", a later duplicate got `200 done`                                                |
+| 25 different events, 4 copies each, all at once    | every event ran once                                                                                                                            |
+| Duplicate while the first run is still working     | `409 processing`, the work ran once                                                                                                             |
+| Work fails, then 20 retries at once                | first answer `500`, exactly one retry runs the work again                                                                                       |
+| Run slower than the lease, then 20 retries at once | exactly one retry takes over; the slow run comes back while that retry is still working, gets `409 superseded` and does not mark the event done |
+| No key, no event id                                | `403`, `400`, nothing reaches the work                                                                                                          |
 
 "The work ran once" is counted by the stand-in that receives the call, not by the workflow's own answer.
 

@@ -163,11 +163,11 @@ const setupTables = workflow('whDedupeSetupDt1', 'Webhook Dedupe · 0 Setup (Dat
       '## Webhook Dedupe · Setup (Data Tables)',
       `Run this once: open it and press **Execute workflow**. It creates the data table \`${CLAIMS}\` for the Data Table receiver and \`${LAB}\` for the lab. Running it again changes nothing.`,
       '',
-      'The webhook does the same for scripted installs (`POST dedupe/setup/data-tables`). You can delete it.',
+      'The webhook does the same for scripted installs (`POST dedupe/setup/data-tables`). If you delete it, delete **Done** too: that node only answers the webhook, and without the webhook a run ends on it with "No Webhook node found".',
     ],
-    [-40, -260],
+    [-40, -320],
     560,
-    200,
+    260,
   );
   w.node('Run once', 'manualTrigger', 1, [0, 0], {});
   w.hook('Or call', 'setup/data-tables', [0, 180]);
